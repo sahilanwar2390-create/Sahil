@@ -1,1 +1,56 @@
-...
+# Is file ko repo mein .github/workflows/build-apk.yml par rakhein.
+# Repo mein jo bhi sabse nayi add/modify hui .zip hogi, ye usay khud extract karke APK banayega.
+name: APK banao
+
+on:
+  push:
+    paths: ['**/*.zip']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sabse nayi zip dhoondo aur extract karo
+        run: |
+          ZIP=$(git log --diff-filter=AM --name-only --pretty=format: -- '*.zip' | sed '/^$/d' | head -n1)
+          [ -n "$ZIP" ] || { echo "Repo mein koi zip nahi mili"; exit 1; }
+          echo "Build ho rahi hai: $ZIP"
+          rm -rf _src && mkdir _src && unzip -q "$ZIP" -d _src
+          PKG=$(find _src -name package.json -not -path '*/node_modules/*' | head -n1)
+          [ -n "$PKG" ] || { echo "Zip ke andar package.json nahi mili"; exit 1; }
+          echo "APP_DIR=$(dirname "$PKG")" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Web build aur Android project
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          npm install
+          [ -d android ] || npx cap add android
+          npx cap sync android
+
+      - name: APK build
+        working-directory: ${{ env.APP_DIR }}/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kitab-ghar-apk
+          path: ${{ env.APP_DIR }}/android/app/build/outputs/apk/debug/*.apk
